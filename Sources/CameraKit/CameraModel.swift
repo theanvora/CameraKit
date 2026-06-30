@@ -2,9 +2,16 @@ import AVFoundation
 import UIKit
 import Observation
 
-/// An `@Observable` AVFoundation camera controller (iOS 17+). Owns the capture
-/// session, exposes observable state for SwiftUI, and captures photos via
-/// `async/await`. Configuration and session control run on a private queue.
+/// Errors surfaced by `CameraModel`.
+public enum CameraError: Error, Sendable {
+    case unauthorized
+    case configurationFailed
+    case captureFailed
+}
+
+/// An `@Observable` AVFoundation camera controller (iOS 17+), modeled on Apple's
+/// AVCam sample: a dedicated session queue, permission handling, tap-to-focus,
+/// pinch-to-zoom, torch, and modern rotation via `RotationCoordinator`.
 ///
 /// Requires `NSCameraUsageDescription` in Info.plist.
 @MainActor
@@ -12,9 +19,16 @@ import Observation
 public final class CameraModel {
     public enum FlashMode: Sendable { case off, on, auto }
 
+    // Observable state
     public private(set) var isConfigured = false
     public private(set) var isRunning = false
     public private(set) var position: AVCaptureDevice.Position = .back
+    public private(set) var authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+    public private(set) var zoomFactor: CGFloat = 1
+    public private(set) var minZoomFactor: CGFloat = 1
+    public private(set) var maxZoomFactor: CGFloat = 1
+    public private(set) var isTorchOn = false
+    public private(set) var error: CameraError?
     public var flashMode: FlashMode = .auto
 
     /// The session to feed into `CameraPreview`.
@@ -25,10 +39,35 @@ public final class CameraModel {
     nonisolated(unsafe) private var captureDelegate: PhotoCaptureDelegate?
     @ObservationIgnored private let queue = DispatchQueue(label: "com.anvora.camerakit.session")
 
+    // Rotation (iOS 17 RotationCoordinator)
+    @ObservationIgnored private weak var previewLayer: AVCaptureVideoPreviewLayer?
+    @ObservationIgnored private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
+    @ObservationIgnored private var rotationObservations: [NSKeyValueObservation] = []
+    @ObservationIgnored private var captureRotationAngle: CGFloat = 90
+
     public init() {}
 
-    /// Build the session graph (input + photo output). Call once before `start()`.
+    // MARK: - Authorization
+
+    @discardableResult
+    public func requestAccess() async -> Bool {
+        let granted = await AVCaptureDevice.requestAccess(for: .video)
+        authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        return granted
+    }
+
+    // MARK: - Lifecycle
+
+    /// Request access (if needed) and build the session graph. Call once before `start()`.
     public func configure() async {
+        if authorizationStatus == .notDetermined {
+            _ = await requestAccess()
+        }
+        guard authorizationStatus == .authorized else {
+            error = .unauthorized
+            return
+        }
+
         await withCheckedContinuation { continuation in
             queue.async { [self] in
                 session.beginConfiguration()
@@ -40,12 +79,19 @@ public final class CameraModel {
                     videoInput = input
                 }
                 if session.canAddOutput(photoOutput) {
+                    photoOutput.maxPhotoQualityPrioritization = .quality
                     session.addOutput(photoOutput)
                 }
                 session.commitConfiguration()
                 continuation.resume()
             }
         }
+
+        if videoInput == nil {
+            error = .configurationFailed
+            return
+        }
+        updateZoomRange()
         isConfigured = true
     }
 
@@ -65,22 +111,40 @@ public final class CameraModel {
         }
     }
 
-    /// Capture a still photo. Returns `nil` if capture failed.
+    /// Wire the preview layer so rotation stays correct (call from `CameraPreview`).
+    public func attachPreview(_ layer: AVCaptureVideoPreviewLayer) {
+        previewLayer = layer
+        guard let device = videoInput?.device else { return }
+        createRotationCoordinator(for: device, previewLayer: layer)
+    }
+
+    // MARK: - Capture
+
     public func capturePhoto() async -> UIImage? {
+        guard isConfigured else { return nil }
         let settings = AVCapturePhotoSettings()
         settings.flashMode = avFlashMode
+        settings.photoQualityPrioritization = .quality
+        let angle = captureRotationAngle
+
         return await withCheckedContinuation { continuation in
-            let delegate = PhotoCaptureDelegate { image in
+            let delegate = PhotoCaptureDelegate { [weak self] image in
+                if image == nil { Task { @MainActor in self?.error = .captureFailed } }
                 continuation.resume(returning: image)
             }
             captureDelegate = delegate
             queue.async { [self] in
+                if let connection = photoOutput.connection(with: .video),
+                   connection.isVideoRotationAngleSupported(angle) {
+                    connection.videoRotationAngle = angle
+                }
                 photoOutput.capturePhoto(with: settings, delegate: delegate)
             }
         }
     }
 
-    /// Flip between front and back cameras.
+    // MARK: - Controls
+
     public func switchCamera() {
         let newPosition: AVCaptureDevice.Position = position == .back ? .front : .back
         queue.async { [self] in
@@ -93,8 +157,86 @@ public final class CameraModel {
                 videoInput = input
             }
             session.commitConfiguration()
-            Task { @MainActor in self.position = newPosition }
+            Task { @MainActor in
+                self.position = newPosition
+                self.updateZoomRange()
+                if let device = self.videoInput?.device, let layer = self.previewLayer {
+                    self.createRotationCoordinator(for: device, previewLayer: layer)
+                }
+            }
         }
+    }
+
+    /// Set zoom, clamped to the device's supported range.
+    public func setZoom(_ factor: CGFloat) {
+        queue.async { [self] in
+            guard let device = videoInput?.device else { return }
+            let clamped = max(device.minAvailableVideoZoomFactor, min(factor, device.maxAvailableVideoZoomFactor))
+            try? device.lockForConfiguration()
+            device.videoZoomFactor = clamped
+            device.unlockForConfiguration()
+            Task { @MainActor in self.zoomFactor = clamped }
+        }
+    }
+
+    /// Tap-to-focus using a point in the preview layer's coordinate space.
+    public func focus(atViewPoint point: CGPoint) {
+        guard let previewLayer else { return }
+        let devicePoint = previewLayer.captureDevicePointConverted(fromLayerPoint: point)
+        queue.async { [self] in
+            guard let device = videoInput?.device else { return }
+            try? device.lockForConfiguration()
+            if device.isFocusPointOfInterestSupported {
+                device.focusPointOfInterest = devicePoint
+                device.focusMode = .autoFocus
+            }
+            if device.isExposurePointOfInterestSupported {
+                device.exposurePointOfInterest = devicePoint
+                device.exposureMode = .autoExpose
+            }
+            device.unlockForConfiguration()
+        }
+    }
+
+    public func setTorch(_ on: Bool) {
+        queue.async { [self] in
+            guard let device = videoInput?.device, device.hasTorch else { return }
+            try? device.lockForConfiguration()
+            device.torchMode = on ? .on : .off
+            device.unlockForConfiguration()
+            Task { @MainActor in self.isTorchOn = on }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func updateZoomRange() {
+        guard let device = videoInput?.device else { return }
+        minZoomFactor = device.minAvailableVideoZoomFactor
+        maxZoomFactor = min(device.maxAvailableVideoZoomFactor, 10)
+        zoomFactor = device.videoZoomFactor
+    }
+
+    private func createRotationCoordinator(for device: AVCaptureDevice, previewLayer: AVCaptureVideoPreviewLayer) {
+        rotationObservations.removeAll()
+        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: previewLayer)
+        rotationCoordinator = coordinator
+
+        previewLayer.connection?.videoRotationAngle = coordinator.videoRotationAngleForHorizonLevelPreview
+        captureRotationAngle = coordinator.videoRotationAngleForHorizonLevelCapture
+
+        rotationObservations.append(
+            coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.new]) { [weak previewLayer] _, change in
+                guard let angle = change.newValue else { return }
+                Task { @MainActor in previewLayer?.connection?.videoRotationAngle = angle }
+            }
+        )
+        rotationObservations.append(
+            coordinator.observe(\.videoRotationAngleForHorizonLevelCapture, options: [.new]) { [weak self] _, change in
+                guard let angle = change.newValue else { return }
+                Task { @MainActor in self?.captureRotationAngle = angle }
+            }
+        )
     }
 
     private var avFlashMode: AVCaptureDevice.FlashMode {
@@ -107,7 +249,7 @@ public final class CameraModel {
 
     private static func device(for position: AVCaptureDevice.Position) -> AVCaptureDevice? {
         AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.builtInWideAngleCamera, .builtInDualCamera, .builtInTripleCamera],
+            deviceTypes: [.builtInTripleCamera, .builtInDualCamera, .builtInWideAngleCamera],
             mediaType: .video,
             position: position
         ).devices.first

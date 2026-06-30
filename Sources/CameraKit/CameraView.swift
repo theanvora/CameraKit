@@ -14,10 +14,22 @@ public struct CameraView: View {
         self.onCapture = onCapture
     }
 
+    @State private var focusIndicator: CGPoint?
+
     public var body: some View {
         ZStack {
-            CameraPreview(session: model.session)
+            GeometryReader { proxy in
+                CameraPreview(session: model.session) { layer in
+                    model.attachPreview(layer)
+                }
                 .ignoresSafeArea()
+                .gesture(zoomGesture)
+                .onTapGesture { location in
+                    model.focus(atViewPoint: location)
+                    showFocusIndicator(at: location)
+                }
+                .overlay(alignment: .topLeading) { focusReticle }
+            }
 
             VStack {
                 topBar
@@ -33,8 +45,34 @@ public struct CameraView: View {
         .onDisappear { model.stop() }
     }
 
+    private var zoomGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                model.setZoom(model.zoomFactor * value)
+            }
+    }
+
+    @ViewBuilder
+    private var focusReticle: some View {
+        if let point = focusIndicator {
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(.yellow, lineWidth: 1.5)
+                .frame(width: 72, height: 72)
+                .position(point)
+                .transition(.opacity)
+        }
+    }
+
+    private func showFocusIndicator(at point: CGPoint) {
+        withAnimation { focusIndicator = point }
+        Task {
+            try? await Task.sleep(for: .seconds(1))
+            withAnimation { focusIndicator = nil }
+        }
+    }
+
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 16) {
             Button {
                 model.flashMode = next(model.flashMode)
             } label: {
@@ -44,7 +82,23 @@ public struct CameraView: View {
                     .padding(10)
                     .background(.black.opacity(0.4), in: Circle())
             }
+            Button {
+                model.setTorch(!model.isTorchOn)
+            } label: {
+                Image(systemName: model.isTorchOn ? "flashlight.on.fill" : "flashlight.off.fill")
+                    .font(.title2)
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(.black.opacity(0.4), in: Circle())
+            }
             Spacer()
+            if model.zoomFactor > 1.05 {
+                Text(String(format: "%.1f×", model.zoomFactor))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.black.opacity(0.4), in: Capsule())
+            }
         }
     }
 

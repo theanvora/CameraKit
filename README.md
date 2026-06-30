@@ -10,9 +10,11 @@ camera, so CameraKit wraps AVFoundation and VisionKit behind clean, `@Observable
 
 ## Features
 
-- **Custom camera** — `CameraModel` (`@Observable` AVFoundation controller) +
-  `CameraPreview` + a ready-made `CameraView` with shutter, flash, and flip.
-  Photo capture is `async`.
+- **Custom camera** — `CameraModel` (`@Observable` AVFoundation controller,
+  modeled on Apple's AVCam) + `CameraPreview` + a ready-made `CameraView`.
+  Includes **permission handling**, **pinch-to-zoom**, **tap-to-focus**, **torch**,
+  flash, camera flip, correct rotation via `RotationCoordinator` (iOS 17), and
+  `async` photo capture with `CameraError` reporting.
 - **Document scanner** — `DocumentScanner` wraps VisionKit's
   `VNDocumentCameraViewController` (edge detection, multi-page, perspective
   correction) and returns `[UIImage]`. Ideal for PDF apps.

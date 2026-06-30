@@ -16,12 +16,19 @@ import VisionKit
 public struct DataScannerView: UIViewControllerRepresentable {
     private let recognizedDataTypes: Set<DataScannerViewController.RecognizedDataType>
     private let onTap: ([RecognizedItem]) -> Void
+    private let onAdd: ([RecognizedItem]) -> Void
 
+    /// - Parameters:
+    ///   - recognizes: data types to detect (e.g. `[.barcode(), .text()]`).
+    ///   - onAdd: newly recognized items as they stream in live.
+    ///   - onTap: items the user tapped on.
     public init(
         recognizes recognizedDataTypes: Set<DataScannerViewController.RecognizedDataType>,
-        onTap: @escaping ([RecognizedItem]) -> Void
+        onAdd: @escaping ([RecognizedItem]) -> Void = { _ in },
+        onTap: @escaping ([RecognizedItem]) -> Void = { _ in }
     ) {
         self.recognizedDataTypes = recognizedDataTypes
+        self.onAdd = onAdd
         self.onTap = onTap
     }
 
@@ -44,15 +51,23 @@ public struct DataScannerView: UIViewControllerRepresentable {
     public func updateUIViewController(_ controller: DataScannerViewController, context: Context) {}
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(onTap: onTap)
+        Coordinator(onAdd: onAdd, onTap: onTap)
     }
 
     public final class Coordinator: NSObject, DataScannerViewControllerDelegate {
+        private let onAdd: ([RecognizedItem]) -> Void
         private let onTap: ([RecognizedItem]) -> Void
-        init(onTap: @escaping ([RecognizedItem]) -> Void) { self.onTap = onTap }
+        init(onAdd: @escaping ([RecognizedItem]) -> Void, onTap: @escaping ([RecognizedItem]) -> Void) {
+            self.onAdd = onAdd
+            self.onTap = onTap
+        }
 
         public func dataScanner(_ dataScanner: DataScannerViewController, didTapOn item: RecognizedItem) {
             onTap([item])
+        }
+
+        public func dataScanner(_ dataScanner: DataScannerViewController, didAdd addedItems: [RecognizedItem], allItems: [RecognizedItem]) {
+            onAdd(addedItems)
         }
     }
 }
