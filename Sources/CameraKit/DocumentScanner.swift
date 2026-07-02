@@ -1,3 +1,10 @@
+//
+//  DocumentScanner.swift
+//  CameraKit
+//
+//  Created by Anvora on 02/07/2026.
+//
+
 import SwiftUI
 import VisionKit
 

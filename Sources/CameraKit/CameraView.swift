@@ -1,3 +1,10 @@
+//
+//  CameraView.swift
+//  CameraKit
+//
+//  Created by Anvora on 02/07/2026.
+//
+
 import SwiftUI
 
 /// A ready-to-use camera screen: live preview with shutter, flash, and flip
