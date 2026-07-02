@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "CameraKit",
     platforms: [
-        .iOS("26.0")
+        .iOS(.v17)
     ],
     products: [
         .library(name: "CameraKit", targets: ["CameraKit"]),
