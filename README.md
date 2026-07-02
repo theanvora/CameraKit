@@ -1,11 +1,11 @@
 # CameraKit
 
-A modern SwiftUI camera & scanning toolkit for iOS (17+). SwiftUI has no native
+A modern SwiftUI camera & scanning toolkit for iOS 26+. SwiftUI has no native
 camera, so CameraKit wraps AVFoundation and VisionKit behind clean, `@Observable`,
 `async/await` APIs.
 
 [![Swift](https://img.shields.io/badge/Swift-5.9+-orange.svg)](https://swift.org)
-[![Platform](https://img.shields.io/badge/iOS-17%2B-blue.svg)](https://developer.apple.com/ios/)
+[![Platform](https://img.shields.io/badge/iOS-26%2B-blue.svg)](https://developer.apple.com/ios/)
 [![SPM](https://img.shields.io/badge/SPM-compatible-brightgreen.svg)](https://swift.org/package-manager/)
 
 ## Features
@@ -13,7 +13,7 @@ camera, so CameraKit wraps AVFoundation and VisionKit behind clean, `@Observable
 - **Custom camera** — `CameraModel` (`@Observable` AVFoundation controller,
   modeled on Apple's AVCam) + `CameraPreview` + a ready-made `CameraView`.
   Includes **permission handling**, **pinch-to-zoom**, **tap-to-focus**, **torch**,
-  flash, camera flip, correct rotation via `RotationCoordinator` (iOS 17), and
+  flash, camera flip, correct rotation via `RotationCoordinator`, and
   `async` photo capture with `CameraError` reporting.
 - **Document scanner** — `DocumentScanner` wraps VisionKit's
   `VNDocumentCameraViewController` (edge detection, multi-page, perspective
@@ -77,7 +77,7 @@ PhotoLibraryPicker { image in self.image = image } label: {
 
 ## Requirements
 
-- iOS 17.0+ · Swift 5.9+
+- iOS 26.0+ · Swift 5.9+
 - A physical device for the camera & `DataScannerView` (not the Simulator).
 
 ## License
