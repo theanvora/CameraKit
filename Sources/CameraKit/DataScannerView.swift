@@ -12,7 +12,6 @@ import VisionKit
 ///     }
 /// }
 /// ```
-@available(iOS 16.0, *)
 public struct DataScannerView: UIViewControllerRepresentable {
     private let recognizedDataTypes: Set<DataScannerViewController.RecognizedDataType>
     private let onTap: ([RecognizedItem]) -> Void
